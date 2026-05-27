@@ -9,25 +9,39 @@ import os
 from dotenv import load_dotenv
 import google.generativeai as genai
 
+embedding_model = SentenceTransformer(
+    "all-MiniLM-L6-v2"
+)
+
 load_dotenv()
 api_key = os.getenv("API_KEY")
 genai.configure(api_key=api_key)
 
 # functions 
 
-def load_pdf(pdf_path):  # function to load the pdf and extract text from it
+def load_pdf(pdf_path):  # function to load the pdf and extract text from it (page wise)
 
     reader = PdfReader(pdf_path)
 
-    full_text = ""
+    pages = []
 
-    for page in reader.pages:
+    for page_num, page in enumerate(
+        reader.pages,
+        start=1
+    ):
+
         text = page.extract_text()
 
         if text:
-            full_text += text + "\n"
 
-    return full_text
+            pages.append(
+                {
+                    "page": page_num,
+                    "text": text
+                }
+            )
+
+    return pages
 
 
 def create_chunks(text):  # function to create chunks of the extracted text from the pdf
@@ -41,24 +55,45 @@ def create_chunks(text):  # function to create chunks of the extracted text from
     '''
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100
+        chunk_size=1000,
+        chunk_overlap=200
     )
 
-    chunks = splitter.split_text(text)
+    chunks = []
+    metadatas = []
 
-    return chunks
+    for page in pages:
+
+        page_chunks = splitter.split_text(
+            page["text"]
+        )
+
+        for chunk in page_chunks:
+
+            chunks.append(chunk)
+
+            metadatas.append(
+                {
+                    "page": page["page"]
+                }
+            )
+
+    return chunks, metadatas
 
 def create_embeddings(chunks):  # function to create embeddings by model loading and we used all-MiniLM-L6-v2 because it is fast, free and good for semantic search
+    
+    embeddings = embedding_model.encode(chunks)
+    
+    return embeddings
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    embeddings = model.encode(chunks)
+def setup_vector_db(chunks, embeddings, metadatas):  # function to setup the vector database using ChromaDB, we create a collection named "pdf_chunks" and add the chunks along with their corresponding embeddings to the collection. Each chunk is assigned a unique ID for easy retrieval during querying.
 
-    return embeddings 
-
-def setup_vector_db(chunks, embeddings):  # function to setup the vector database using ChromaDB, we create a collection named "pdf_chunks" and add the chunks along with their corresponding embeddings to the collection. Each chunk is assigned a unique ID for easy retrieval during querying.
-  
     client = chromadb.Client()
+
+    try:
+        client.delete_collection("pdf_chunks")
+    except:
+        pass
 
     collection = client.create_collection(
         name="pdf_chunks"
@@ -69,7 +104,8 @@ def setup_vector_db(chunks, embeddings):  # function to setup the vector databas
     collection.add(
         ids=ids,
         documents=chunks,
-        embeddings=embeddings.tolist()
+        embeddings=embeddings.tolist(),
+        metadatas=metadatas
     )
 
     return collection
@@ -87,59 +123,121 @@ def answer_question(question, collection, gemini_model):
         str: Generated answer.
     """
 
-    results = collection.query(
-        query_texts=[question],
-        n_results=8
+    # Create embedding for user's question
+    question_embedding = embedding_model.encode(
+        [question]
     )
 
+    # Retrieve most relevant chunks
+    results = collection.query(
+        query_embeddings=question_embedding.tolist(),
+        n_results=20
+    )
+
+    print("\n===== RETRIEVED CHUNKS =====\n")
+
+    for i, (chunk, distance) in enumerate(
+        zip(
+            results["documents"][0],
+            results["distances"][0]
+        ),
+        start=1
+    ):
+
+        print(
+            f"\n------ CHUNK {i} | Distance: {distance:.4f} ------\n"
+        )
+
+        print(chunk[:500])
+
+    # Combine retrieved chunks into one context
     retrieved_chunks = results["documents"][0]
 
-    context = "\n\n".join(retrieved_chunks)
+    context = "\n\n".join(
+        retrieved_chunks
+    )
 
+    # Prompt for Gemini
     prompt = f"""
     You are a helpful assistant.
-
-    Answer ONLY from the provided context.
-
+    Answer the question ONLY using the provided context.
+    
+    If the answer exists in the context,
+    provide the exact answer.
+    
+    If the answer cannot be found in the context,
+    reply with:
+    
+    "I could not find this information in the document."
+    
     Context:
     {context}
-
+    
     Question:
     {question}
-
+    
     Answer:
     """
 
-    response = gemini_model.generate_content(prompt)
+    response = gemini_model.generate_content(
+        prompt
+    )
 
     return response.text
 
 # main flow of the code
 
-pdf_path = "data/sample.pdf"
-full_text = load_pdf(pdf_path)
+if __name__ == "__main__":
 
-# print(f"Total Pages: {len(reader.pages)}")  used to print the total number of pages in the pdf
+    pdf_path = "data/sample.pdf"
 
-chunks = create_chunks(full_text)
+    # Load PDF page by page
+    pages = load_pdf(
+        pdf_path
+    )
 
-embeddings = create_embeddings(chunks)
+    # Create chunks and page metadata
+    chunks, metadatas = create_chunks(
+        pages
+    )
 
-collection = setup_vector_db(
-    chunks,
-    embeddings
-)
+    # Debug check
+    for i, chunk in enumerate(chunks):
 
-gemini_model = genai.GenerativeModel(
-    "gemini-2.5-flash"
-)
+        if "ridhima" in chunk.lower():
 
-question = input("\n\n Ask a question: \n")
+            print("\n===== FOUND CHUNK =====\n")
 
-answer = answer_question(
-    question,
-    collection,
-    gemini_model
-)
+            print(chunk)
 
-print(answer)
+    # Create embeddings
+    embeddings = create_embeddings(
+        chunks
+    )
+
+    # Store in ChromaDB
+    collection = setup_vector_db(
+        chunks,
+        embeddings,
+        metadatas
+    )
+
+    # Gemini model
+    gemini_model = genai.GenerativeModel(
+        "gemini-2.5-flash"
+    )
+
+    # Ask question
+    question = input(
+        "\n\nAsk a question:\n"
+    )
+
+    answer = answer_question(
+        question,
+        collection,
+        gemini_model
+    )
+
+    print("\n===== ANSWER =====\n")
+
+    print(answer)
