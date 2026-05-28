@@ -8,15 +8,15 @@ This project allows users to upload PDF documents and ask questions directly fro
 
 # 🚀 Features
 
-Upload any PDF document
-Extract text page-by-page
-Smart semantic chunking
-Vector embeddings using Sentence Transformers
-ChromaDB vector storage
-Semantic similarity retrieval
-Local AI-powered answer generation
-Fully local setup (No paid APIs required)
-Streamlit interactive UI
+✅ Upload any PDF document
+✅ Extract text page-by-page
+✅ Smart semantic chunking
+✅ Vector embeddings using Sentence Transformers
+✅ ChromaDB vector storage
+✅ Semantic similarity retrieval
+✅ Local AI-powered answer generation
+✅ Fully local setup (No paid APIs required)
+✅ Streamlit interactive UI
 
 ---
 
