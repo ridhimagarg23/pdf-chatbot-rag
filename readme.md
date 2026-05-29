@@ -16,7 +16,7 @@ This project allows users to upload PDF documents and ask questions directly fro
 ✅ Semantic similarity retrieval
 ✅ Local AI-powered answer generation
 ✅ Fully local setup (No paid APIs required)
-✅ Streamlit interactive UI screem
+✅ Streamlit interactive UI screen
 
 ---
 
